@@ -1,0 +1,265 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+<title>Эксперимент на запоминание слов</title>
+
+<link href="https://unpkg.com/jspsych@7.3.4/css/jspsych.css" rel="stylesheet" />
+<script src="https://unpkg.com/jspsych@7.3.4/dist/index.browser.js"></script>
+<script src="https://unpkg.com/@jspsych/plugin-html-keyboard-response@1.1.3/dist/index.browser.js"></script>
+<script src="https://unpkg.com/@jspsych/plugin-survey-text@1.1.3/dist/index.browser.js"></script>
+<script src="https://unpkg.com/@jspsych/plugin-survey-multi-choice@1.1.3/dist/index.browser.js"></script>
+
+<style>
+body{
+  background:white;
+  font-family:Arial,sans-serif;
+}
+
+.word{
+  font-size:48px;
+  text-align:center;
+  margin-bottom:25px;
+}
+
+.timer{
+  font-size:32px;
+  text-align:center;
+  color:#444;
+  margin-bottom:20px;
+}
+
+.jspsych-content{
+  max-width:800px;
+}
+
+input[type="text"]{
+  font-size:24px !important;
+  padding:10px !important;
+}
+</style>
+</head>
+
+<body></body>
+
+<script>
+
+const GOOGLE_SCRIPT_URL =
+'https://script.google.com/macros/s/AKfycbz7dn-YIt6Lq09-hJ50dNvYc7gCUGAwjlqwCt-9wCbducBYrYF1Lz724Qc7pIr2y5Z3ow/exec';
+
+const vocabulary = [
+
+{ru:'лопатка', en:'spatula'},
+{ru:'венчик', en:'whisk'},
+{ru:'нарезать (на мелкие кубики)', en:'chop'},
+{ru:'перемешивать', en:'stir'},
+{ru:'щепотка соли', en:'pinch of salt'},
+{ru:'чайник', en:'kettle'},
+{ru:'ножницы', en:'scissors'},
+{ru:'пресс для чеснока', en:'garlic press'},
+{ru:'открывашка для бутылок', en:'bottle opener'},
+{ru:'фартук', en:'apron'},
+{ru:'салфетка', en:'napkin'},
+{ru:'добавлять (ингредиент)', en:'add'},
+{ru:'варить', en:'boil'},
+{ru:'жарить', en:'fry'},
+{ru:'столовый прибор', en:'utensil'},
+{ru:'солонка', en:'salt shaker'},
+{ru:'посыпать', en:'sprinkle'},
+{ru:'обмакнуть', en:'dip'},
+{ru:'нарезать (на большие кубики)', en:'dice'},
+{ru:'выжимать (например, лимон)', en:'squeeze'}
+
+];
+
+const shuffledVocabulary =
+[...vocabulary].sort(() => Math.random() - 0.5);
+
+let participantName = '';
+let learningMethod = '';
+let correctAnswers = 0;
+
+let reactionTimes = [];
+let typingTimes = [];
+let hesitationTimes = [];
+
+function average(arr){
+  if(arr.length === 0) return 0;
+  return Math.round(arr.reduce((a,b)=>a+b,0)/arr.length);
+}
+
+const jsPsych = initJsPsych({
+
+  override_safe_mode: true,
+
+  on_finish: async function () {
+
+    const accuracy =
+      Math.round((correctAnswers / vocabulary.length) * 100);
+
+    const payload = {
+      name: participantName,
+      method: learningMethod,
+      correctWords: correctAnswers,
+      accuracy: accuracy,
+      avgReactionTime: average(reactionTimes),
+      avgTypingTime: average(typingTimes),
+      avgHesitationTime: average(hesitationTimes)
+    };
+
+    console.log("SENDING:", payload);
+
+    try {
+
+      const response = await fetch(GOOGLE_SCRIPT_URL, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'text/plain;charset=utf-8'
+        },
+        body: JSON.stringify(payload)
+      });
+
+      const text = await response.text();
+      console.log("GAS RESPONSE:", text);
+
+    } catch (error) {
+      console.log("ERROR:", error);
+    }
+  }
+});
+
+const timeline = [];
+
+timeline.push({
+  type: jsPsychSurveyText,
+  questions:[{ prompt:'Введите имя:', required:true }],
+  on_finish:function(data){
+    participantName = data.response.Q0;
+  }
+});
+
+timeline.push({
+  type: jsPsychSurveyMultiChoice,
+  questions:[{
+    prompt:'Как учили слова?',
+    options:['Самостоятельно','Интервальные повторения','Telegram-бот'],
+    required:true
+  }],
+  on_finish:function(data){
+    learningMethod = data.response.Q0;
+  }
+});
+
+timeline.push({
+  type: jsPsychHtmlKeyboardResponse,
+  stimulus:`<h2>Тренировка</h2><p>Нажмите любую клавишу</p>`
+});
+
+const practiceWords = [
+{ru:'яблоко', en:'apple'},
+{ru:'молоко', en:'milk'}
+];
+
+function createTrial(wordObj, practice=false){
+
+  return {
+    type: jsPsychSurveyText,
+    questions:[{
+      prompt:`<div class="word">${wordObj.ru}</div><div class="timer" id="timer">10</div>`,
+      required:false
+    }],
+    trial_duration:10000,
+
+    on_load:function(){
+
+      let timeLeft = 10;
+      const timerEl = document.getElementById('timer');
+
+      const interval = setInterval(()=>{
+        timeLeft--;
+        if(timerEl) timerEl.textContent = timeLeft;
+        if(timeLeft <= 0) clearInterval(interval);
+      },1000);
+
+      setTimeout(()=>{
+        const input = document.querySelector('input[type="text"]');
+        if(!input) return;
+
+        let first = null;
+        let last = null;
+        let hes = [];
+
+        input.addEventListener('keydown',()=>{
+          const now = performance.now();
+          if(!first) first = now;
+          if(last && now-last>1000) hes.push(now-last);
+          last = now;
+        });
+
+        window.metrics = {
+          start: performance.now(),
+          first: ()=>first,
+          last: ()=>last,
+          hesitations: hes
+        };
+
+      },50);
+    },
+
+    on_finish:function(data){
+
+      const response = (data.response?.Q0 || '').trim().toLowerCase();
+      const correct = wordObj.en.toLowerCase();
+
+      const isCorrect = response === correct;
+
+      if(isCorrect && !practice) correctAnswers++;
+
+      const m = window.metrics;
+
+      let rt = 10000, tt = 0, ht = 0;
+
+      if(m && m.first()){
+
+        rt = Math.round(m.first() - m.start);
+        tt = Math.round(m.last() - m.first());
+        ht = m.hesitations.length
+          ? Math.round(m.hesitations.reduce((a,b)=>a+b,0)/m.hesitations.length)
+          : 0;
+      }
+
+      if(!practice){
+        reactionTimes.push(rt);
+        typingTimes.push(tt);
+        hesitationTimes.push(ht);
+      }
+    }
+  };
+}
+
+practiceWords.forEach(w=>timeline.push(createTrial(w,true)));
+
+timeline.push({
+  type: jsPsychHtmlKeyboardResponse,
+  stimulus:`<h2>Основной тест</h2><p>Нажмите любую клавишу</p>`
+});
+
+shuffledVocabulary.forEach(w=>timeline.push(createTrial(w)));
+
+timeline.push({
+  type: jsPsychHtmlKeyboardResponse,
+  stimulus:function(){
+    const acc = Math.round((correctAnswers/vocabulary.length)*100);
+    return `<h2>Готово! Спасибо за участие!</h2>
+    <p>${correctAnswers}/${vocabulary.length}</p>
+    <p>${acc}%</p>
+    <p>Нажмите любую клавишу</p>`;
+  }
+});
+
+jsPsych.run(timeline);
+
+</script>
+</html>
